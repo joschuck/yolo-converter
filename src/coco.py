@@ -44,17 +44,17 @@ def convert_coco_json(input_dir: str, output_dir: str, task: str = "detection", 
                 cls = coco91_to_coco80_class[ann['category_id'] - 1] if cls91to80 else ann['category_id'] - 1
 
                 line = [cls]
-                if task.lower() == "detection":
-                    # The COCO box format is [top left x, top left y, width, height]
-                    box = np.array(ann['bbox'], dtype=np.float64)
-                    box[:2] += box[2:] / 2  # xy top-left corner to center
-                    box[[0, 2]] /= width  # normalize x
-                    box[[1, 3]] /= height  # normalize y
-                    if box[2] <= 0 or box[3] <= 0:  # if w <= 0 and h <= 0
-                        continue
-                    line += box.tolist()
 
-                elif task.lower() in ("segmentation", "panoptic"):
+                # The COCO box format is [top left x, top left y, width, height]
+                box = np.array(ann['bbox'], dtype=np.float64)
+                box[:2] += box[2:] / 2  # xy top-left corner to center
+                box[[0, 2]] /= width  # normalize x
+                box[[1, 3]] /= height  # normalize y
+                if box[2] <= 0 or box[3] <= 0:  # if w <= 0 and h <= 0
+                    continue
+                line += box.tolist()
+
+                if task.lower() in ("segmentation", "panoptic"):
                     if len(ann['segmentation']) > 1:
                         segmentation = merge_multi_segment(ann['segmentation'])
                         segmentation = (np.concatenate(segmentation, axis=0) / np.array([width, height])).reshape(-1).tolist()
@@ -157,8 +157,8 @@ def make_dirs(_dir: str):
     """
     _dir = Path(_dir)
 
-    if _dir.exists():
-        shutil.rmtree(_dir)
+    #if _dir.exists():
+    #    shutil.rmtree(_dir)
 
     for p in _dir, _dir / 'labels', _dir / 'images':
         p.mkdir(parents=True, exist_ok=True)
