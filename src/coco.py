@@ -19,10 +19,10 @@ def convert_coco_json(input_dir: str, output_dir: str, task: str = "detection", 
     make_dirs(output_dir)
 
     for json_file in sorted(Path(input_dir).resolve().glob('*.json')):
-        folder_name = Path(output_dir) / 'labels' / json_file.stem.replace('instances_', '')  # folder name
+        folder_name = Path(output_dir) / 'labels' / json_file.stem.split("_")[-1]   #.replace('instances_', '')  # folder name
         folder_name.mkdir(exist_ok=True)
-        with open(json_file) as file_name:
-            data = json.load(file_name)
+        with open(json_file) as f:
+            data = json.load(f)
 
         # Create image-annotations dict
         images = {f"{x['id']:g}" : x for x in data['images']}
@@ -33,7 +33,7 @@ def convert_coco_json(input_dir: str, output_dir: str, task: str = "detection", 
         # Write individual labels file
         for img_id, annotations in tqdm(img_to_anns.items(), desc=f'Annotations {json_file}'):
             img = images['%g' % img_id]
-            height, width, file_name = img['height'], img['width'], img['file_name']
+            height, width, file_name = img['height'], img['width'], img['file_name'].split('/')[-1]
 
             lines = []
             for ann in annotations:
@@ -45,16 +45,17 @@ def convert_coco_json(input_dir: str, output_dir: str, task: str = "detection", 
 
                 line = [cls]
 
-                # The COCO box format is [top left x, top left y, width, height]
-                box = np.array(ann['bbox'], dtype=np.float64)
-                box[:2] += box[2:] / 2  # xy top-left corner to center
-                box[[0, 2]] /= width  # normalize x
-                box[[1, 3]] /= height  # normalize y
-                if box[2] <= 0 or box[3] <= 0:  # if w <= 0 and h <= 0
-                    continue
-                line += box.tolist()
+                if task == "detection":
+                    # The COCO box format is [top left x, top left y, width, height]
+                    box = np.array(ann['bbox'], dtype=np.float64)
+                    box[:2] += box[2:] / 2  # xy top-left corner to center
+                    box[[0, 2]] /= width  # normalize x
+                    box[[1, 3]] /= height  # normalize y
+                    if box[2] <= 0 or box[3] <= 0:  # if w <= 0 and h <= 0
+                        continue
+                    line += box.tolist()
 
-                if task.lower() in ("segmentation", "panoptic"):
+                elif task.lower() in ("segmentation", "panoptic"):
                     if len(ann['segmentation']) > 1:
                         segmentation = merge_multi_segment(ann['segmentation'])
                         segmentation = (np.concatenate(segmentation, axis=0) / np.array([width, height])).reshape(-1).tolist()
@@ -63,7 +64,7 @@ def convert_coco_json(input_dir: str, output_dir: str, task: str = "detection", 
                         segmentation = (np.array(segmentation).reshape(-1, 2) / np.array([width, height])).reshape(-1).tolist()
                     line += segmentation
 
-                elif task.lower() == "keypoints":
+                if task.lower() == "keypoints":
                     keyp = ann.get('keypoints')
                     if keyp is None:
                         continue
@@ -86,7 +87,7 @@ def convert_coco_json(input_dir: str, output_dir: str, task: str = "detection", 
         # Write individual labels file
         with open(Path(output_dir) / f"{json_file.stem}.txt", 'w') as file:
             for image in images.values():
-                file.write(f"./images/{json_file.stem.replace('instances_', '')}/{image['file_name']}\n")
+                file.write(f"./images/{image['file_name']}\n")
 
 
 def min_index(arr1, arr2):
@@ -157,9 +158,8 @@ def make_dirs(_dir: str):
     """
     _dir = Path(_dir)
 
-    #if _dir.exists():
-    #    shutil.rmtree(_dir)
+    if (_dir / 'labels').exists():
+        shutil.rmtree(_dir)
 
-    for p in _dir, _dir / 'labels', _dir / 'images':
+    for p in _dir / 'labels', _dir / 'images':
         p.mkdir(parents=True, exist_ok=True)
-
