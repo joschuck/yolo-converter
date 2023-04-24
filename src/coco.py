@@ -2,6 +2,7 @@ import json
 import shutil
 from collections import defaultdict
 from pathlib import Path
+from typing import Tuple, Optional
 
 import numpy as np
 from tqdm import tqdm
@@ -15,12 +16,16 @@ coco91_to_coco80_class = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, None, 11, 12, 13, 14
          None, 73, 74, 75, 76, 77, 78, 79, None]
 
 
-def convert_coco_json(input_dir: str, output_dir: str, task: str = "detection", cls91to80: bool = False):
+def convert_coco_json(
+    input_dir: str,
+    output_dir: str,
+    task: str = "detection",
+    cls91to80: bool = False,
+    split: Optional[Tuple[float, float, float]] = None
+):
     make_dirs(output_dir)
 
     for json_file in sorted(Path(input_dir).resolve().glob('*.json')):
-        folder_name = Path(output_dir) / 'labels' / json_file.stem.split("_")[-1]   #.replace('instances_', '')  # folder name
-        folder_name.mkdir(exist_ok=True)
         with open(json_file) as f:
             data = json.load(f)
 
@@ -30,8 +35,25 @@ def convert_coco_json(input_dir: str, output_dir: str, task: str = "detection", 
         for ann in data['annotations']:
             img_to_anns[ann['image_id']].append(ann)
 
+        # convert to absolute number of images
+        if split is not None:
+            split = tuple(map(lambda p: int(p * len(img_to_anns)), split))
+
         # Write individual labels file
-        for img_id, annotations in tqdm(img_to_anns.items(), desc=f'Annotations {json_file}'):
+        for index, (img_id, annotations) in tqdm(enumerate(img_to_anns.items()), desc=f'Annotations {json_file}'):
+            if split is None:
+                folder_name = Path(output_dir) / 'labels' / json_file.stem.split("_")[
+                    -1]  # .replace('instances_', '')  # folder name
+            else:
+                # we kinda need to split whatever comes from CVAT, figure out if we are part of train, val or test set
+                split_name = "train"
+                if split[0] <= index < sum(split[:2]):
+                    split_name = "val"
+                elif sum(split[:2]) <= index:
+                    split_name = "test"
+                folder_name = Path(output_dir) / 'labels' / split_name
+            folder_name.mkdir(exist_ok=True)
+
             img = images['%g' % img_id]
             height, width, file_name = img['height'], img['width'], img['file_name'].split('/')[-1]
 
@@ -84,10 +106,13 @@ def convert_coco_json(input_dir: str, output_dir: str, task: str = "detection", 
                 for line in lines:
                     file.write(" ".join(f"{elem:g}" for elem in line).rstrip() + '\n')
 
-        # Write individual labels file
-        with open(Path(output_dir) / f"{json_file.stem}.txt", 'w') as file:
-            for image in images.values():
-                file.write(f"./images/{image['file_name']}\n")
+            # Write individual labels file
+            if split is None:
+                with open(Path(output_dir) / f"{json_file.stem}.txt", 'a') as file:
+                    file.write(f"./images/{img['file_name']}\n")
+            else:
+                with open(Path(output_dir) / f"{json_file.stem.split('_')[0]}_{split_name}.txt", 'a') as file:
+                    file.write(f"./images/{img['file_name']}\n")
 
 
 def min_index(arr1, arr2):
@@ -158,8 +183,10 @@ def make_dirs(_dir: str):
     """
     _dir = Path(_dir)
 
-    if (_dir / 'labels').exists():
-        shutil.rmtree(_dir)
+    labels_dir = _dir / 'labels'
+    image_dir = _dir / 'images'
+    if labels_dir.exists():
+        shutil.rmtree(labels_dir)
 
-    for p in _dir / 'labels', _dir / 'images':
+    for p in labels_dir, image_dir:
         p.mkdir(parents=True, exist_ok=True)
