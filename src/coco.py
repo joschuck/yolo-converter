@@ -1,3 +1,4 @@
+import copy
 import json
 import shutil
 from collections import defaultdict
@@ -24,35 +25,24 @@ def convert_coco_json(
     split: Optional[Tuple[float, float, float]] = None
 ):
     make_dirs(output_dir)
+    split_annotations(input_dir, output_dir, split)
 
     for json_file in sorted(Path(input_dir).resolve().glob('*.json')):
+        folder_name = Path(output_dir) / 'labels' / json_file.stem.split("_")[
+            -1]  # .replace('instances_', '')  # folder name
+        folder_name.mkdir(exist_ok=True)
+
         with open(json_file) as f:
             data = json.load(f)
 
         # Create image-annotations dict
-        images = {f"{x['id']:g}" : x for x in data['images']}
+        images = {f"{x['id']:g}": x for x in data['images']}
         img_to_anns = defaultdict(list)
         for ann in data['annotations']:
             img_to_anns[ann['image_id']].append(ann)
 
-        # convert to absolute number of images
-        if split is not None:
-            split = tuple(map(lambda p: int(p * len(img_to_anns)), split))
-
         # Write individual labels file
-        for index, (img_id, annotations) in tqdm(enumerate(img_to_anns.items()), desc=f'Annotations {json_file}'):
-            if split is None:
-                folder_name = Path(output_dir) / 'labels' / json_file.stem.split("_")[
-                    -1]  # .replace('instances_', '')  # folder name
-            else:
-                # we kinda need to split whatever comes from CVAT, figure out if we are part of train, val or test set
-                split_name = "train"
-                if split[0] <= index < sum(split[:2]):
-                    split_name = "val"
-                elif sum(split[:2]) <= index:
-                    split_name = "test"
-                folder_name = Path(output_dir) / 'labels' / split_name
-            folder_name.mkdir(exist_ok=True)
+        for img_id, annotations in tqdm(img_to_anns.items(), desc=f'Annotations {json_file}'):
 
             img = images['%g' % img_id]
             height, width, file_name = img['height'], img['width'], img['file_name'].split('/')[-1]
@@ -106,14 +96,75 @@ def convert_coco_json(
                 for line in lines:
                     file.write(" ".join(f"{elem:g}" for elem in line).rstrip() + '\n')
 
-            # Write individual labels file
-            if split is None:
-                with open(Path(output_dir) / f"{json_file.stem}.txt", 'a') as file:
-                    file.write(f"./images/{img['file_name']}\n")
-            else:
-                with open(Path(output_dir) / f"{json_file.stem.split('_')[0]}_{split_name}.txt", 'a') as file:
-                    file.write(f"./images/{img['file_name']}\n")
+        # Write individual labels file
+        with open(Path(output_dir) / f"{json_file.stem}.txt", 'w') as file:
+            for image in images.values():
+                file.write(f"./images/{image['file_name']}\n")
 
+
+def split_annotations(
+    input_dir: str,
+    output_dir: str,
+    split: Optional[Tuple[float, float, float]] = None
+):
+    json_files = list(Path(input_dir).resolve().glob('*.json'))
+
+    if len(json_files) > 1:
+        print("Dataset already split")
+        return
+
+    json_file = list(Path(input_dir).resolve().glob('*.split'))[0]
+    with open(json_file) as f:
+        ds_orig = json.load(f)
+
+    # Create image-annotations dict
+    img_to_anns = defaultdict(list)
+    for ann in ds_orig['annotations']:
+        img_to_anns[ann['image_id']].append(ann)
+
+    # convert to absolute number of images
+    if split is not None:
+        split = tuple(map(lambda p: int(p * len(img_to_anns)), split))
+
+    # create 3 datasets out of one
+    datasets = {}
+    for split_name in ("train", "val", "test"):
+        datasets[split_name] = {
+            "licenses": ds_orig["licenses"],
+            "info": ds_orig["info"],
+            "categories": ds_orig["categories"],
+            "images": [],
+            "annotations": []
+        }
+
+    # Write individual labels file
+    for index, (img_id, annotations) in tqdm(enumerate(img_to_anns.items()), desc=f'Splitting {json_file}'):
+        split_name = "train"
+        if split[0] <= index < sum(split[:2]):
+            split_name = "val"
+        elif sum(split[:2]) <= index:
+            split_name = "test"
+
+        # write annotation to correct split
+        datasets[split_name]["annotations"].extend(annotations)
+
+        # move image
+        image_meta = next(image for image in ds_orig['images'] if image["id"] == img_id)
+        folder_name = Path(output_dir) / 'images' / split_name
+        folder_name.mkdir(exist_ok=True)
+
+        old_path = Path(output_dir) / 'images' / image_meta['file_name']
+        new_path = Path(output_dir) / 'images' / split_name / image_meta['file_name']
+        shutil.move(old_path, new_path)
+
+        # change path
+        image_meta["file_name"] = f"{split_name}/{image_meta['file_name']}"
+        datasets[split_name]["images"].append(image_meta)
+
+    # write split ds
+    for split_name, ds in datasets.items():
+        with (Path(input_dir) / f"{json_file.stem}_{split_name}.json").open("w") as outfile:
+            json.dump(ds, outfile)
 
 def min_index(arr1, arr2):
     """Find a pair of indexes with the shortest distance.
